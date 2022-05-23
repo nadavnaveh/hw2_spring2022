@@ -454,7 +454,21 @@ def removeRAMFromDisk(ramID: int, diskID: int) -> Status:
 
 
 def averageFileSizeOnDisk(diskID: int) -> float:
-    return 0
+    conn = None
+    average = 0
+    try:
+        conn = Connector.DBConnector()
+        q = sql.SQL("SELECT COALESCE(AVG(DiskSizeNeeded),0) From Files "
+                    "WHERE FileID IN SELECT FileID FROM FilesXDisks "
+                    "WHERE DiskID = {disk_id}").format(disk_id=sql.Literal(diskID))
+        _, res_set = conn.execute(q)
+        conn.commit()
+        average = res_set[0]['coalesce']
+    except Exception as e:
+        average = -1
+    finally:
+        conn.close()
+    return average
 
 
 def diskTotalRAM(diskID: int) -> int:
