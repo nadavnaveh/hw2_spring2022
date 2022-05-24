@@ -473,7 +473,7 @@ def averageFileSizeOnDisk(diskID: int) -> float:
 
 def diskTotalRAM(diskID: int) -> int:
     conn = None
-    sum=0                   
+    s = 0
     try:
         conn = Connector.DBConnector()
         q = sql.SQL("SELECT COALESCE(SUM(RamSize),0) From RamXDisks "   
@@ -482,17 +482,17 @@ def diskTotalRAM(diskID: int) -> int:
         #the value required in case there are no disks with that Id.
         _, res_set = conn.execute(q)
         conn.commit()
-        sum = res_set[0]['coalesce']
+        s = res_set[0]['coalesce']
     except Exception as e:
-        sum = -1
+        s = -1
     finally:
         conn.close()
-    return sum
+    return s
 
 
 def getCostForType(type: str) -> int:
     conn = None
-    cost=0                   
+    cost = 0
     try:
         conn = Connector.DBConnector()
         q = sql.SQL("SELECT COALESCE(SUM(Cost*DiskSizeNeeded),0) From (SELECT * FROM Files )\
@@ -510,7 +510,30 @@ def getCostForType(type: str) -> int:
 
 
 def getFilesCanBeAddedToDisk(diskID: int) -> List[int]:
-    return []
+    conn = None
+    ret_lst = []
+    try:
+        conn = Connector.DBConnector()
+        q = sql.SQL(
+            "SELECT FileID FROM FilesCanBeAddedOnDisks WHERE DiskID = {diskID} ORDER BY FileID DESC LIMIT 5").format(
+            diskID=sql.Literal(diskID))
+        _, res_set = conn.execute(q, printSchema=False)
+        conn.commit()
+        # print users
+        for index in range(res_set.size()):  # for each user
+            current_row = res_set[index]["id"]  # get the row
+            ret_lst.append(current_row)
+    except Exception as e:
+        print(e)
+    finally:
+        conn.close()
+    return ret_lst
+
+
+
+
+
+    return ret_lst
 
 
 def getFilesCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
