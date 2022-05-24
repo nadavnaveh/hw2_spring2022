@@ -472,11 +472,41 @@ def averageFileSizeOnDisk(diskID: int) -> float:
 
 
 def diskTotalRAM(diskID: int) -> int:
-    return 0
+    conn = None
+    sum=0                   
+    try:
+        conn = Connector.DBConnector()
+        q = sql.SQL("SELECT COALESCE(SUM(RamSize),0) From RamXDisks "   
+                    "WHERE DiskID = {disk_id}").format(disk_id=sql.Literal(diskID))
+        #in case there is no disk with id diskID the coalesce will return 0, which is 
+        #the value required in case there are no disks with that Id.
+        _, res_set = conn.execute(q)
+        conn.commit()
+        sum = res_set[0]['coalesce']
+    except Exception as e:
+        sum = -1
+    finally:
+        conn.close()
+    return sum
 
 
 def getCostForType(type: str) -> int:
-    return 0
+    conn = None
+    cost=0                   
+    try:
+        conn = Connector.DBConnector()
+        q = sql.SQL("SELECT COALESCE(SUM(Cost*DiskSizeNeeded),0) From (SELECT * FROM Files )\
+                WHERE FileType={type}) as TypeFiles INNER JOIN  FilesXDisks ON TypeFiles.FileID=\
+                    FilesXDisk.FileID"   
+                    "WHERE DiskID = {disk_id}").format(disk_id=sql.Literal(type))
+        _, res_set = conn.execute(q)
+        conn.commit()
+        sum = res_set[0]['coalesce']
+    except Exception as e:
+        sum = -1
+    finally:
+        conn.close()
+    return sum
 
 
 def getFilesCanBeAddedToDisk(diskID: int) -> List[int]:
