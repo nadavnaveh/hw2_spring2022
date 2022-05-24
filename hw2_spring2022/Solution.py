@@ -532,10 +532,6 @@ def getFilesCanBeAddedToDisk(diskID: int) -> List[int]:
 
 
 
-
-    return ret_lst
-
-
 def getFilesCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
     return []
 
