@@ -347,8 +347,8 @@ def addFileToDisk(file: File, diskID: int) -> Status:
         conn = Connector.DBConnector()
         q = sql.SQL("BEGIN;\
                     INSERT INTO FilesXDisks(FileID, DiskID, Cost)\
-                    VALUES ({file_id}, {disk_id}, {file_size}*SELECT DiskCostPerByte\
-                    FROM Disks WHERE DiskID = {disk_id});\
+                    VALUES ({file_id}, {disk_id}, {file_size}*(SELECT DiskCostPerByte\
+                    FROM Disks WHERE DiskID = {disk_id}));\
                     UPDATE Disks SET DiskFreeSpace = DiskFreeSpace - {file_size} WHERE DiskID = {disk_id};\
                     COMMIT;").format(file_id=sql.Literal(file.getFileID()),
                                      disk_id=sql.Literal(diskID),
@@ -401,10 +401,10 @@ def addRAMToDisk(ramID: int, diskID: int) -> Status:
     conn = None
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL("INSERT INTO RamsXDisks(FileID, DiskID, RamSize)\
-                     VALUES ({ram_id}, {disk_id}, "
-                    "SELECT RamSize FROM Rams WHERE RamID = {ram_id})").format(ram_id=sql.Literal(ramID),
-                                                                               disk_id=sql.Literal(diskID))
+        q = sql.SQL("INSERT INTO RamsXDisks(RamID, DiskID, RamSize)\
+                     VALUES ({ram_id}, {disk_id},\
+                     (SELECT RamSize FROM Rams WHERE RamID = {ram_id}))").format(ram_id=sql.Literal(ramID),
+                                                                                 disk_id=sql.Literal(diskID))
         rows_effected, _ = conn.execute(q)
         conn.commit()
         if rows_effected == 0:
@@ -471,10 +471,10 @@ def diskTotalRAM(diskID: int) -> int:
     s = 0
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL("SELECT COALESCE(SUM(RamSize),0) From RamXDisks "   
+        q = sql.SQL("SELECT COALESCE(SUM(RamSize),0) From RamXDisks "
                     "WHERE DiskID = {disk_id}").format(disk_id=sql.Literal(diskID))
-        #in case there is no disk with id diskID the coalesce will return 0, which is 
-        #the value required in case there are no disks with that Id.
+        # in case there is no disk with id diskID the coalesce will return 0, which is
+        # the value required in case there are no disks with that Id.
         _, res_set = conn.execute(q)
         conn.commit()
         s = res_set[0]['coalesce']
@@ -515,8 +515,8 @@ def getFilesCanBeAddedToDisk(diskID: int) -> List[int]:
         _, res_set = conn.execute(q, printSchema=False)
         conn.commit()
         # print users
-        for index in range(res_set.size()):  # for each user 
-            current_row = res_set[index]["id"]  # get the row
+        for index in res_set.rows:
+            current_row = index[0]
             ret_lst.append(current_row)
     except Exception as e:
         print(e)
@@ -530,15 +530,15 @@ def getFilesCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
     ret_lst = []
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL("SELECT FileID FROM (FilesStorableOnDisks INNER JOIN\
-                     (SELECT DiskID, SUM(RamSize) FROM RamsXDisks GROUP BY DiskID)\
-                     WHERE DiskSizeNeeded <= SUM(RamSize) AND DiskID={disk_id})\
-                     ORDER BY FileID DESC LIMIT 5").format(disk_id=sql.Literal(diskID))
+        q = sql.SQL("SELECT FileID FROM FilesStorableOnDisks\
+                     WHERE DiskSizeNeeded <= (SELECT SUM(RamSize) FROM RamsXDisks WHERE DiskID ={disk_id})\
+                     AND DiskID={disk_id}\
+                     ORDER BY FileID ASC LIMIT 5").format(disk_id=sql.Literal(diskID))
         _, res_set = conn.execute(q, printSchema=False)
         conn.commit()
-        for i in range(res_set.size()):  # for each user
-            row = res_set[i]["id"]  # get the row
-            ret_lst.append(row)
+        for index in res_set.rows:
+            current_row = index[0]
+            ret_lst.append(current_row)
     except Exception as e:
         print(e)
         res = []
