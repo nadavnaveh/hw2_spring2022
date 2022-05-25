@@ -14,42 +14,37 @@ def createTables():
         conn = Connector.DBConnector()
         conn.execute("BEGIN;\
                              CREATE TABLE Files (FileID INTEGER NOT NULL PRIMARY KEY,\
-                                  FileType TEXT NOT NULL,\
-                                  DiskSizeNeeded INTEGER NOT NULL,\
-                                  CHECK(FileID > 0),\
-                                  CHECK(DiskSizeNeeded >= 0));\
+                                                FileType TEXT NOT NULL,\
+                                                DiskSizeNeeded INTEGER NOT NULL,\
+                                                CHECK(FileID > 0),\
+                                                CHECK(DiskSizeNeeded >= 0));\
                              CREATE TABLE Disks (DiskID INTEGER NOT NULL PRIMARY KEY,\
-                                  DiskManufacturer TEXT NOT NULL,\
-                                  DiskSpeed INTEGER NOT NULL,\
-                                  DiskFreeSpace INTEGER NOT NULL,\
-                                  DiskCostPerByte INTEGER NOT NULL,\
-                                  CHECK(DiskID > 0),\
-                                  CHECK(DiskSpeed > 0),\
-                                  CHECK(DiskCostPerByte > 0),\
-                                  CHECK(DiskFreeSpace >= 0));\
+                                                 DiskManufacturer TEXT NOT NULL,\
+                                                 DiskSpeed INTEGER NOT NULL,\
+                                                 DiskFreeSpace INTEGER NOT NULL,\
+                                                 DiskCostPerByte INTEGER NOT NULL,\
+                                                 CHECK(DiskID > 0),\
+                                                 CHECK(DiskSpeed > 0),\
+                                                 CHECK(DiskCostPerByte > 0),\
+                                                 CHECK(DiskFreeSpace >= 0));\
                              CREATE TABLE Rams (RamID INTEGER NOT NULL PRIMARY KEY,\
-                                  RamSize INTEGER NOT NULL,\
-                                  RamCompany TEXT NOT NULL,\
-                                  CHECK(RamID > 0),\
-                                  CHECK(RamSize > 0));\
-                             CREATE TABLE FilesXDisks\
-                                 (FileID INTEGER REFERENCES Files\
-                                  ON DELETE CASCADE,\
-                                  DiskID INTEGER REFERENCES Disks\
-                                  ON DELETE CASCADE,\
-                                  Cost INTEGER, \
-                                  PRIMARY KEY(FileID, DiskID),\
-                                  CHECK(Cost >= 0));\
-                             CREATE TABLE RamsXDisks\
-                                 (RamID INTEGER REFERENCES Rams\
-                                  ON DELETE CASCADE,\
-                                  DiskID INTEGER REFERENCES Disks\
-                                  ON DELETE CASCADE,\
-                                  RamSize INTEGER,\
-                                  PRIMARY KEY(RamID, DiskID),\
-                                  CHECK(RamSize >= 0));\
-                             CREATE VIEW FilesCanBeAddedOnDisks AS \
-                             (SELECT F.FileID, D.DiskID, F.DiskSizeNeeded FROM Files F, Disks D WHERE DiskSizeNeeded <= DiskFreeSpace);\
+                                                RamSize INTEGER NOT NULL,\
+                                                RamCompany TEXT NOT NULL,\
+                                                CHECK(RamID > 0),\
+                                                CHECK(RamSize > 0));\
+                             CREATE TABLE RamsXDisks (RamID INTEGER REFERENCES Rams ON DELETE CASCADE,\
+                                                      DiskID INTEGER REFERENCES Disks ON DELETE CASCADE,\
+                                                      RamSize INTEGER,\
+                                                      PRIMARY KEY(RamID, DiskID),\
+                                                      CHECK(RamSize >= 0));\
+                             CREATE TABLE FilesXDisks (FileID INTEGER REFERENCES Files ON DELETE CASCADE,\
+                                                       DiskID INTEGER REFERENCES Disks ON DELETE CASCADE,\
+                                                       Cost INTEGER, \
+                                                       PRIMARY KEY(FileID, DiskID),\
+                                                       CHECK(Cost >= 0));\
+                             CREATE VIEW FilesStorableOnDisks AS (SELECT F.FileID,F.DiskSizeNeeded, D.DiskID\
+                                                                  FROM Files F, Disks D\
+                                                                  WHERE DiskSizeNeeded <= DiskFreeSpace);\
                         COMMIT;")
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -108,7 +103,7 @@ def dropTables():
                              DROP TABLE IF EXISTS Rams CASCADE;\
                              DROP TABLE IF EXISTS FilesXDisks CASCADE;\
                              DROP TABLE IF EXISTS RamsXDisks CASCADE;\
-                             DROP VIEW IF EXISTS FilesCanBeAddedOnDisks;\
+                             DROP VIEW IF EXISTS FilesStorableOnDisks;\
                           COMMIT;")
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -495,10 +490,10 @@ def getCostForType(type: str) -> int:
     cost = 0
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL("SELECT COALESCE(SUM(Cost*DiskSizeNeeded),0) From (SELECT * FROM Files )\
-                WHERE FileType={type}) as TypeFiles INNER JOIN  FilesXDisks ON TypeFiles.FileID=\
-                    FilesXDisk.FileID"   
-                    "WHERE DiskID = {disk_id}").format(disk_id=sql.Literal(type))
+        q = sql.SQL("SELECT COALESCE(SUM(Cost*DiskSizeNeeded),0)\
+                     From (SELECT * FROM Files WHERE FileType={type}) as\
+                     TypeFiles INNER JOIN FilesXDisks ON TypeFiles.FileID = FilesXDisk.FileID\
+                     WHERE DiskID = {disk_id}").format(disk_id=sql.Literal(type))
         _, res_set = conn.execute(q)
         conn.commit()
         sum = res_set[0]['coalesce']
@@ -515,12 +510,12 @@ def getFilesCanBeAddedToDisk(diskID: int) -> List[int]:
     try:
         conn = Connector.DBConnector()
         q = sql.SQL(
-            "SELECT FileID FROM FilesCanBeAddedOnDisks WHERE DiskID = {diskID} ORDER BY FileID DESC LIMIT 5").format(
+            "SELECT FileID FROM FilesStorableOnDisks WHERE DiskID = {diskID} ORDER BY FileID DESC LIMIT 5").format(
             diskID=sql.Literal(diskID))
         _, res_set = conn.execute(q, printSchema=False)
         conn.commit()
         # print users
-        for index in range(res_set.size()):  # for each user
+        for index in range(res_set.size()):  # for each user 
             current_row = res_set[index]["id"]  # get the row
             ret_lst.append(current_row)
     except Exception as e:
@@ -530,9 +525,25 @@ def getFilesCanBeAddedToDisk(diskID: int) -> List[int]:
     return ret_lst
 
 
-
-
 def getFilesCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
+    conn = None
+    ret_lst = []
+    try:
+        conn = Connector.DBConnector()
+        q = sql.SQL("SELECT FileID FROM (FilesStorableOnDisks INNER JOIN\
+                     (SELECT DiskID, SUM(RamSize) FROM RamsXDisks GROUP BY DiskID)\
+                     WHERE DiskSizeNeeded <= SUM(RamSize) AND DiskID={disk_id})\
+                     ORDER BY FileID DESC LIMIT 5").format(disk_id=sql.Literal(diskID))
+        _, res_set = conn.execute(q, printSchema=False)
+        conn.commit()
+        for i in range(res_set.size()):  # for each user
+            row = res_set[i]["id"]  # get the row
+            ret_lst.append(row)
+    except Exception as e:
+        print(e)
+        res = []
+    finally:
+        conn.close()
     return []
 
 
