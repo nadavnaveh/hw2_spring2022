@@ -1,4 +1,4 @@
-from types import NoneType
+# from types import NoneType
 from typing import List
 import Utility.DBConnector as Connector
 from Utility.Status import Status
@@ -43,6 +43,10 @@ def createTables():
                                                        Cost INTEGER, \
                                                        PRIMARY KEY(FileID, DiskID),\
                                                        CHECK(Cost >= 0));\
+                             CREATE VIEW DiskFileCount AS (SELECT d.DiskSpeed, d.DiskID, COUNT(FileID)\
+                                                           FROM Disks AS d, Files AS f\
+                                                           WHERE f.DiskSizeNeeded <= d.DiskFreeSpace\
+                                                           GROUP BY d.DiskID);\
                              CREATE VIEW FilesStorableOnDisks AS (SELECT F.FileID,F.DiskSizeNeeded, D.DiskID\
                                                                   FROM Files F, Disks D\
                                                                   WHERE DiskSizeNeeded <= DiskFreeSpace);\
@@ -172,16 +176,18 @@ def deleteFile(file: File) -> Status:
     conn = None
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL("DELETE FROM Files WHERE FileID = {file_id}").format(file_id=sql.Literal(file.getFileID()))
-        row_affected, _ = conn.execute(q)
+        q = sql.SQL("BEGIN;\
+                     UPDATE Disks SET DiskFreeSpace = DiskFreeSpace + {file_size}\
+                     WHERE DiskID IN (SELECT DiskID FROM FilesXDisks WHERE FileID={id});\
+                     DELETE FROM Files WHERE FileID={id};\
+                     COMMIT;").format(id=sql.Literal(file.getFileID()), file_size=sql.Literal(file.getSize()))
+        conn.execute(q)
         conn.commit()
-        if not row_affected:
-            stat = Status.NOT_EXISTS
     except Exception as e:
-        stat = Status.ERROR
+        status = Status.ERROR
     finally:
         conn.close()
-    return stat
+        return stat
 
 
 def addDisk(disk: Disk) -> Status:
@@ -547,55 +553,67 @@ def getFilesCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
         res = []
     finally:
         conn.close()
-    return []
+    return ret_lst
 
 
 def isCompanyExclusive(diskID: int) -> bool:
+    res = False
     conn = None
-    different_companies_count=0
-
-
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL(
-            "SELECT COUNT(*) FROM RamXDisks INNER JOIN  Rams\
-             ON RamXDisks.RamID= Rams.ID WHERE DiskID <> {diskID}").format(diskID=sql.Literal(diskID))
-        _, res_set = conn.execute(q, printSchema=False)
-        different_companies_count=res_set[0]    #getting the count of different companies
+        query = sql.SQL(
+            "SELECT DISTINCT * FROM ((SELECT RamCompany FROM Rams WHERE\
+             (RamID IN (SELECT RamID FROM RamsXDisks WHERE DiskID = {diskID}))) as ramco\
+              FULL OUTER JOIN (SELECT DiskManufacturer FROM Disks WHERE DiskID = {diskID}) as disco\
+              ON ramco.RamCompany = disco.DiskManufacturer) as a").format(
+            diskID=sql.Literal(diskID))
+        rows_effected, _ = conn.execute(query)
         conn.commit()
-        # print users
-        
+        if rows_effected == 1:
+            res = True
     except Exception as e:
-        print(e)
+        res = False
     finally:
         conn.close()
-    return different_companies_count>0
-    
+    return res
+
 
 
 def getConflictingDisks() -> List[int]:
     conn = None
-    ret_lst = []
+    res_lst = []
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL("SELECT DISTINCT FirstFileList.DiskID FROM FilesXDisks as FirstFileList INNER JOIN  \
-        FilesXDisks as SecondFileList ON FirstFileList.DiskID <> SecondFileList.DiskID AND  FirstFileList.FileID==SecondFileList.FileID\
-            ORDER BY FirstFile.DiskID ASC")
-        _, res_set = conn.execute(q, printSchema=False)
+        q = sql.SQL("SELECT DISTINCT DiskID FROM FilesXDisks\
+                     WHERE FileID IN(SELECT FileID FROM FilesXDisks GROUP BY FileID HAVING COUNT(FileID) > 1)\
+                     ORDER BY DiskID ASC")
+        rows_effected, res_set = conn.execute(q)
         conn.commit()
-        for index in res_set.rows:
-            current_row = index[0]
-            ret_lst.append(current_row)
+        for i in res_set.rows:
+            res_lst.append(i[0])
     except Exception as e:
         print(e)
-        res = []
+        res_lst = []
     finally:
         conn.close()
-    return ret_lst
+    return res_lst
 
 
 def mostAvailableDisks() -> List[int]:
-    return []
+    conn = None
+    res_lst = []
+    try:
+        conn = Connector.DBConnector()
+        q = sql.SQL('SELECT DiskID FROM DiskFileCount ORDER BY count DESC, DiskSpeed DESC, DiskID ASC LIMIT 5')
+        rows_effected, res_set = conn.execute(q)
+        for i in range(0, rows_effected):
+            res_lst.append(res_set[i]['DiskID'])
+        conn.commit()
+    except Exception as e:
+        pass
+    finally:
+        conn.close()
+        return res_lst
 
 
 def getCloseFiles(fileID: int) -> List[int]:
@@ -603,20 +621,20 @@ def getCloseFiles(fileID: int) -> List[int]:
 
 
 #debugging functions:
-def getFiles():
-    conn = None
-    ret_lst = []
-    try:
-        conn = Connector.DBConnector()
-        q = sql.SQL("SELECT * FROM Files")
-        _, res_set = conn.execute(q)
-        conn.commit()
-        #for index in res_set.rows:
-         #   current_row = index[0]
-         #   ret_lst.append(current_row)
-    except Exception as e:
-        print(e)
-        res = []
-    finally:
-        conn.close()
-    return res_set
+# def getFiles():
+#     conn = None
+#     ret_lst = []
+#     try:
+#         conn = Connector.DBConnector()
+#         q = sql.SQL("SELECT * FROM Files")
+#         _, res_set = conn.execute(q)
+#         conn.commit()
+#         #for index in res_set.rows:
+#          #   current_row = index[0]
+#          #   ret_lst.append(current_row)
+#     except Exception as e:
+#         print(e)
+#         res = []
+#     finally:
+#         conn.close()
+#     return res_set
