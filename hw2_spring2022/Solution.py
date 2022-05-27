@@ -1,3 +1,4 @@
+from types import NoneType
 from typing import List
 import Utility.DBConnector as Connector
 from Utility.Status import Status
@@ -128,6 +129,8 @@ def addFile(file: File) -> Status:
     conn = None
     try:
         conn = Connector.DBConnector()
+        if conn==None:
+            print("Database did not connect. I think.")     #remove this line later
         q = sql.SQL("INSERT INTO Files(FileID, FileType, DiskSizeNeeded) VALUES({file_id},{file_type},"
                     "{disk_size_needed})").format(file_id=sql.Literal(file.getFileID()),
                                                   file_type=sql.Literal(file.getType()),
@@ -548,11 +551,47 @@ def getFilesCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
 
 
 def isCompanyExclusive(diskID: int) -> bool:
-    return True
+    conn = None
+    different_companies_count=0
+
+
+    try:
+        conn = Connector.DBConnector()
+        q = sql.SQL(
+            "SELECT COUNT(*) FROM RamXDisks INNER JOIN  Rams\
+             ON RamXDisks.RamID= Rams.ID WHERE DiskID <> {diskID}").format(diskID=sql.Literal(diskID))
+        _, res_set = conn.execute(q, printSchema=False)
+        different_companies_count=res_set[0]    #getting the count of different companies
+        conn.commit()
+        # print users
+        
+    except Exception as e:
+        print(e)
+    finally:
+        conn.close()
+    return different_companies_count>0
+    
 
 
 def getConflictingDisks() -> List[int]:
-    return []
+    conn = None
+    ret_lst = []
+    try:
+        conn = Connector.DBConnector()
+        q = sql.SQL("SELECT DISTINCT FirstFileList.DiskID FROM FilesXDisks as FirstFileList INNER JOIN  \
+        FilesXDisks as SecondFileList ON FirstFileList.DiskID <> SecondFileList.DiskID AND  FirstFileList.FileID==SecondFileList.FileID\
+            ORDER BY FirstFile.DiskID ASC")
+        _, res_set = conn.execute(q, printSchema=False)
+        conn.commit()
+        for index in res_set.rows:
+            current_row = index[0]
+            ret_lst.append(current_row)
+    except Exception as e:
+        print(e)
+        res = []
+    finally:
+        conn.close()
+    return ret_lst
 
 
 def mostAvailableDisks() -> List[int]:
@@ -561,3 +600,23 @@ def mostAvailableDisks() -> List[int]:
 
 def getCloseFiles(fileID: int) -> List[int]:
     return []
+
+
+#debugging functions:
+def getFiles():
+    conn = None
+    ret_lst = []
+    try:
+        conn = Connector.DBConnector()
+        q = sql.SQL("SELECT * FROM Files")
+        _, res_set = conn.execute(q)
+        conn.commit()
+        #for index in res_set.rows:
+         #   current_row = index[0]
+         #   ret_lst.append(current_row)
+    except Exception as e:
+        print(e)
+        res = []
+    finally:
+        conn.close()
+    return res_set

@@ -6,3 +6,6 @@
 /dataSources.local.xml
 # Editor-based HTTP Client requests
 /httpRequests/
+/hw2_spring2022/Test.py
+/hw2_spring2022/Utility/database.ini
+
