@@ -14,7 +14,7 @@ def createTables():
     try:
         conn = Connector.DBConnector()
         conn.execute("BEGIN;\
-                             CREATE TABLE Files (FileID INTEGER NOT NULL PRIMARY KEY,\
+                            CREATE TABLE Files (FileID INTEGER NOT NULL PRIMARY KEY,\
                                                 FileType TEXT NOT NULL,\
                                                 DiskSizeNeeded INTEGER NOT NULL,\
                                                 CHECK(FileID > 0),\
@@ -33,22 +33,26 @@ def createTables():
                                                 RamCompany TEXT NOT NULL,\
                                                 CHECK(RamID > 0),\
                                                 CHECK(RamSize > 0));\
-                             CREATE TABLE RamsXDisks (RamID INTEGER REFERENCES Rams ON DELETE CASCADE,\
-                                                      DiskID INTEGER REFERENCES Disks ON DELETE CASCADE,\
+                             CREATE TABLE RamsXDisks (RamID INTEGER NOT NULL,\
+                                                      DiskID INTEGER NOT NULL,\
                                                       RamSize INTEGER,\
                                                       PRIMARY KEY(RamID, DiskID),\
+                                                      FOREIGN KEY (RamID) REFERENCES Rams(RamID) ON DELETE CASCADE,\
+                                                      FOREIGN KEY (DiskID) REFERENCES Disks(DiskID) ON DELETE CASCADE,\
                                                       CHECK(RamSize >= 0));\
-                             CREATE TABLE FilesXDisks (FileID INTEGER REFERENCES Files ON DELETE CASCADE,\
-                                                       DiskID INTEGER REFERENCES Disks ON DELETE CASCADE,\
+                             CREATE TABLE FilesXDisks (FileID INTEGER NOT NULL,\
+                                                       DiskID INTEGER NOT NULL,\
                                                        Cost INTEGER, \
                                                        PRIMARY KEY(FileID, DiskID),\
+                                                       FOREIGN KEY (FileID) REFERENCES Files(FileID) ON DELETE CASCADE,\
+                                                       FOREIGN KEY (DiskID) REFERENCES Disks(DiskID) ON DELETE CASCADE,\
                                                        CHECK(Cost >= 0));\
-                             CREATE VIEW DiskFileCount AS (SELECT d.DiskSpeed, d.DiskID, COUNT(FileID)\
-                                                           FROM Disks AS d, Files AS f\
-                                                           WHERE f.DiskSizeNeeded <= d.DiskFreeSpace\
-                                                           GROUP BY d.DiskID);\
-                             CREATE VIEW FilesStorableOnDisks AS (SELECT F.FileID,F.DiskSizeNeeded, D.DiskID\
-                                                                  FROM Files F, Disks D\
+                             CREATE VIEW DiskFileCount AS (SELECT DiskID, DiskSpeed,\
+                                                          (SELECT COUNT(FileID) FROM Files AS f\
+                                                           WHERE f.DiskSizeNeeded<=d.DiskFreeSpace)\
+                                                           AS FileCount FROM disks AS d);\
+                             CREATE VIEW FilesStorableOnDisks AS (SELECT d.DiskID, f.FileID,f.DiskSizeNeeded\
+                                                                  FROM Disks AS d, Files AS f\
                                                                   WHERE DiskSizeNeeded <= DiskFreeSpace);\
                         COMMIT;")
         conn.commit()
@@ -147,6 +151,8 @@ def addFile(file: File) -> Status:
         stat = Status.BAD_PARAMS
     except DatabaseException.UNIQUE_VIOLATION as e:
         stat = Status.ALREADY_EXISTS
+    except DatabaseException.ConnectionInvalid as e:
+        status = Status.ERROR
     except Exception as e:
         stat = Status.ERROR
     finally:
@@ -156,19 +162,20 @@ def addFile(file: File) -> Status:
 
 
 def getFileByID(fileID: int) -> File:
-    file_to_ret = File.badFile()
     conn = None
+    rows_effected, ret_val = 0, None
     try:
         conn = Connector.DBConnector()
         q = sql.SQL("SELECT * FROM Files WHERE fileID = {file_id}").format(file_id=sql.Literal(fileID))
-        _, ret_val = conn.execute(q)
-        val = ret_val.__getitem__(0)
-        file_to_ret = File(val[ret_val.cols_header[0]], val[ret_val.cols_header[1]], val[ret_val.cols_header[2]])
+        rows_effected, ret_val = conn.execute(q)
+        conn.commit()
     except Exception as e:
         print(e)
     finally:
         conn.close()
-    return file_to_ret
+        if rows_effected == 0:
+            return File.badFile()
+        return File(ret_val[0]['FileID'], ret_val[0]['FileType'], ret_val[0]['DiskSizeNeeded'])
 
 
 def deleteFile(file: File) -> Status:
@@ -184,7 +191,8 @@ def deleteFile(file: File) -> Status:
         conn.execute(q)
         conn.commit()
     except Exception as e:
-        status = Status.ERROR
+        stat = Status.ERROR
+        print(e)
     finally:
         conn.close()
         return stat
@@ -219,20 +227,24 @@ def addDisk(disk: Disk) -> Status:
 
 
 def getDiskByID(diskID: int) -> Disk:
-    disk_to_ret = File.badFile()
+    rows_effected, ret_val = 0, None
     conn = None
     try:
         conn = Connector.DBConnector()
         q = sql.SQL("SELECT * FROM Disks WHERE DiskID = {disk_id}").format(disk_id=sql.Literal(diskID))
-        _, ret_val = conn.execute(q)
-        val = ret_val.__getitem__(0)
-        disk_to_ret = Disk(val[ret_val.cols_header[0]], val[ret_val.cols_header[1]], val[ret_val.cols_header[2]],
-                           val[ret_val.cols_header[3]], val[ret_val.cols_header[4]])
+        rows_effected, ret_val = conn.execute(q)
+        conn.commit()
     except Exception as e:
         print(e)
     finally:
         conn.close()
-    return disk_to_ret
+        if rows_effected == 0:
+            return Disk.badDisk()
+        return Disk(ret_val[0]['DiskID'],
+                    ret_val[0]['DiskManufacturer'],
+                    ret_val[0]['DiskSpeed'],
+                    ret_val[0]['DiskFreeSpace'],
+                    ret_val[0]['DiskCostPerByte'])
 
 
 def deleteDisk(diskID: int) -> Status:
@@ -269,6 +281,8 @@ def addRAM(ram: RAM) -> Status:
         stat = Status.BAD_PARAMS
     except DatabaseException.UNIQUE_VIOLATION as e:
         stat = Status.ALREADY_EXISTS
+    except DatabaseException.ConnectionInvalid as e:
+        status = Status.ERROR
     except Exception as e:
         stat = Status.ERROR
     finally:
@@ -278,19 +292,19 @@ def addRAM(ram: RAM) -> Status:
 
 
 def getRAMByID(ramID: int) -> RAM:
-    ram_to_ret = File.badFile()
+    rows_effected, ret_val = 0, None
     conn = None
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL("SELECT * FROM Files WHERE ramID = {ram_id}").format(ram_id=sql.Literal(ramID))
-        _, ret_val = conn.execute(q)
-        val = ret_val.__getitem__(0)
-        ram_to_ret = RAM(val[ret_val.cols_header[0]], val[ret_val.cols_header[1]], val[ret_val.cols_header[2]])
+        q = sql.SQL("SELECT * FROM Rams WHERE ramID = {ram_id}").format(ram_id=sql.Literal(ramID))
+        rows_effected, ret_val = conn.execute(q)
     except Exception as e:
         print(e)
     finally:
         conn.close()
-    return ram_to_ret
+        if rows_effected == 0:
+            return RAM.badRAM()
+        return RAM(ret_val[0]['RamID'], ret_val[0]['RamCompany'], ret_val[0]['RamSize'])
 
 
 def deleteRAM(ramID: int) -> Status:
@@ -356,7 +370,8 @@ def addFileToDisk(file: File, diskID: int) -> Status:
         conn = Connector.DBConnector()
         q = sql.SQL("BEGIN;\
                     INSERT INTO FilesXDisks(FileID, DiskID, Cost)\
-                    VALUES ({file_id}, {disk_id}, {file_size}*(SELECT DiskCostPerByte\
+                    VALUES ({file_id}, {disk_id},\
+                    (SELECT DiskSizeNeeded from Files WHERE FileID = {file_id})*(SELECT DiskCostPerByte\
                     FROM Disks WHERE DiskID = {disk_id}));\
                     UPDATE Disks SET DiskFreeSpace = DiskFreeSpace - {file_size} WHERE DiskID = {disk_id};\
                     COMMIT;").format(file_id=sql.Literal(file.getFileID()),
@@ -386,18 +401,19 @@ def removeFileFromDisk(file: File, diskID: int) -> Status:
     try:
         conn = Connector.DBConnector()
         q = sql.SQL("BEGIN;\
-                        UPDATE Disks SET DiskFreeSpace = DiskFreeSpace + {file_size} WHERE DiskID = {disk_id};\
-                        DELETE FROM FilesXDisks(FileID, DiskID, Cost) WHERE DiskID = {disk_id}) AND FileID = {file_id};\
+                        UPDATE Disks SET DiskFreeSpace = DiskFreeSpace + {file_size} WHERE DiskID =\
+                        (SELECT DiskID FROM FilesXDisks WHERE FileID={file_id} AND DiskID={disk_id});\
+                        DELETE FROM FilesXDisks WHERE DiskID = {disk_id} AND FileID = {file_id};\
                         COMMIT;").format(file_id=sql.Literal(file.getFileID()),
                                          disk_id=sql.Literal(diskID),
                                          file_size=sql.Literal(file.getSize()))
         rows_effected, _ = conn.execute(q)
-        conn.commit()
     except DatabaseException.NOT_NULL_VIOLATION as e:
         stat = Status.BAD_PARAMS
         # conn.rollback()
     except Exception as e:
         stat = Status.ERROR
+        print(e)
         # conn.rollback()
     finally:
         # will happen any way after code try termination or exception handling
@@ -439,9 +455,9 @@ def removeRAMFromDisk(ramID: int, diskID: int) -> Status:
     conn = None
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL("DELETE FROM RamsXDisks(RamID, DiskID, RamSize) "
-                    "WHERE DiskID = {disk_id}) "
-                    "AND RamID = {file_id}").format(file_id=sql.Literal(ramID),
+        q = sql.SQL("DELETE FROM RamsXDisks\
+                     WHERE DiskID = {disk_id}\
+                     AND RamID = {ram_id}").format(ram_id=sql.Literal(ramID),
                                                     disk_id=sql.Literal(diskID))
         rows_effected, _ = conn.execute(q)
         conn.commit()
@@ -454,44 +470,51 @@ def removeRAMFromDisk(ramID: int, diskID: int) -> Status:
     finally:
         # will happen any way after code try termination or exception handling
         conn.close()
+        if stat == Status.OK and not rows_effected:
+            stat = Status.NOT_EXISTS
     return stat
+
 
 
 def averageFileSizeOnDisk(diskID: int) -> float:
     conn = None
-    average = 0
+    avg = 0
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL("SELECT COALESCE(AVG(DiskSizeNeeded),0) From Files "
-                    "WHERE FileID IN SELECT FileID FROM FilesXDisks "
-                    "WHERE DiskID = {disk_id}").format(disk_id=sql.Literal(diskID))
-        _, res_set = conn.execute(q)
+        query = sql.SQL('SELECT AVG(DiskSizeNeeded)\
+                        FROM Files WHERE FileID\
+                        IN (SELECT FileID FROM FilesXDisks WHERE DiskID={disk_id})').format(disk_id=sql.Literal(diskID))
+        _, result = conn.execute(query)
+        avg = result[0]['avg']
+        if avg is None:
+            avg = 0
         conn.commit()
-        average = res_set[0]['coalesce']
     except Exception as e:
-        average = -1
+        avg = -1
     finally:
         conn.close()
-    return average
-
+        return avg
 
 def diskTotalRAM(diskID: int) -> int:
     conn = None
     s = 0
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL("SELECT COALESCE(SUM(RamSize),0) From RamXDisks "
-                    "WHERE DiskID = {disk_id}").format(disk_id=sql.Literal(diskID))
+        q = sql.SQL("SELECT SUM(RamSize) FROM RamsXDisks\
+                     WHERE DiskID = {disk_id}").format(disk_id=sql.Literal(diskID))
         # in case there is no disk with id diskID the coalesce will return 0, which is
         # the value required in case there are no disks with that Id.
         _, res_set = conn.execute(q)
+        s = res_set[0]['sum']
+        if s is None:
+            s = 0
         conn.commit()
-        s = res_set[0]['coalesce']
     except Exception as e:
+        print(e)
         s = -1
     finally:
         conn.close()
-    return s
+        return s
 
 
 def getCostForType(type: str) -> int:
@@ -499,18 +522,20 @@ def getCostForType(type: str) -> int:
     cost = 0
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL("SELECT COALESCE(SUM(Cost*DiskSizeNeeded),0)\
-                     From (SELECT * FROM Files WHERE FileType={type}) as\
-                     TypeFiles INNER JOIN FilesXDisks ON TypeFiles.FileID = FilesXDisk.FileID\
-                     WHERE DiskID = {disk_id}").format(disk_id=sql.Literal(type))
+        q = sql.SQL("SELECT SUM(Cost)\
+                     From (SELECT * FROM Files WHERE FileType={type}) AS\
+                     TypeFiles INNER JOIN FilesXDisks ON TypeFiles.FileID = FilesXDisks.FileID").format(type=sql.Literal(type))
         _, res_set = conn.execute(q)
+        cost = res_set[0]['sum']
+        if cost is None:
+            cost = 0
         conn.commit()
-        sum = res_set[0]['coalesce']
     except Exception as e:
-        sum = -1
+        print(e)
+        cost = -1
     finally:
         conn.close()
-    return sum
+        return cost
 
 
 def getFilesCanBeAddedToDisk(diskID: int) -> List[int]:
@@ -540,17 +565,17 @@ def getFilesCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
     try:
         conn = Connector.DBConnector()
         q = sql.SQL("SELECT FileID FROM FilesStorableOnDisks\
-                     WHERE DiskSizeNeeded <= (SELECT SUM(RamSize) FROM RamsXDisks WHERE DiskID ={disk_id})\
-                     AND DiskID={disk_id}\
+                     WHERE DiskId = {disk_id}\
+                     AND (DiskSizeNeeded <= (SELECT COALESCE(SUM(RamSize),0) FROM RamsXDisks WHERE DiskID = {disk_id}))\
                      ORDER BY FileID ASC LIMIT 5").format(disk_id=sql.Literal(diskID))
-        _, res_set = conn.execute(q, printSchema=False)
+        _, res_set = conn.execute(q)
         conn.commit()
         for index in res_set.rows:
             current_row = index[0]
             ret_lst.append(current_row)
     except Exception as e:
         print(e)
-        res = []
+        ret_lst = []
     finally:
         conn.close()
     return ret_lst
@@ -604,7 +629,7 @@ def mostAvailableDisks() -> List[int]:
     res_lst = []
     try:
         conn = Connector.DBConnector()
-        q = sql.SQL('SELECT DiskID FROM DiskFileCount ORDER BY count DESC, DiskSpeed DESC, DiskID ASC LIMIT 5')
+        q = sql.SQL('SELECT DiskID FROM DiskFileCount ORDER BY FileCount DESC, DiskSpeed DESC, DiskID ASC LIMIT 5')
         rows_effected, res_set = conn.execute(q)
         for i in range(0, rows_effected):
             res_lst.append(res_set[i]['DiskID'])
@@ -617,7 +642,27 @@ def mostAvailableDisks() -> List[int]:
 
 
 def getCloseFiles(fileID: int) -> List[int]:
-    return []
+    conn = None
+    res = []
+    try:
+        conn = Connector.DBConnector()
+        q = sql.SQL("SELECT FileID FROM (SELECT * FROM (SELECT * FROM FilesXDisks WHERE\
+                     FileID != {file_id} AND DiskID IN\
+                     (SELECT DiskID FROM FilesXDisks WHERE FileID = {file_id})) AS helper\
+                      FULL JOIN Files USING(FileID)) AS FullJoin\
+                      WHERE FileID != {file_id}\
+                      GROUP BY FileID HAVING COALESCE(COUNT(DiskID),0) >= (SELECT (COUNT(*)+1)/2\
+                      FROM FilesXDisks WHERE FileID = {file_id})\
+                      ORDER BY FileID ASC LIMIT 10").format(file_id=sql.Literal(fileID))
+        rows_effected, res_set = conn.execute(q)
+        conn.commit()
+        for i in res_set.rows:
+            res.append(i[0])
+    except Exception as e:
+        res = []
+    finally:
+        conn.close()
+    return res
 
 
 #debugging functions:
